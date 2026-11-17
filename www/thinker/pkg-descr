@@ -1,0 +1,7 @@
+Thinker is an open-source LLM gateway for AI agents. It exposes
+OpenAI- and Anthropic-compatible endpoints, routes each request to the
+right model and provider (with fallbacks and quotas), and records cost,
+tokens and full request logs in a web dashboard.
+
+This port runs the official build natively on FreeBSD with Node.js and
+a dedicated PostgreSQL cluster managed by the thinker_db rc(8) script.

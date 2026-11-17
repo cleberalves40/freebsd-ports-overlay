@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# PROVIDE: thinker
+# REQUIRE: LOGIN NETWORKING thinker_db
+# KEYWORD: shutdown
+#
+# Servidor do Thinker (node sob daemon(8), reiniciado se cair).
+#
+# thinker_enable (bool):          YES para iniciar no boot. Padrao: NO
+# thinker_port (int):             porta HTTP. Padrao: 2099
+# thinker_bind (addr):            endereco de escuta. Padrao: 127.0.0.1
+# thinker_url (url):              URL publica (BETTER_AUTH_URL).
+#                                 Padrao: http://localhost:${thinker_port}
+# thinker_trusted_proxies (list): proxies confiaveis. Padrao: 127.0.0.1,::1
+# thinker_catalog_sync (bool):    sincroniza precos/modelos. Padrao: true
+#
+# Variaveis extras do Thinker: %%ETCDIR%%/thinker.env
+
+. /etc/rc.subr
+
+name="thinker"
+rcvar="thinker_enable"
+
+load_rc_config thinker_db
+load_rc_config "$name"
+
+: "${thinker_enable:=NO}"
+: "${thinker_port:=2099}"
+: "${thinker_bind:=127.0.0.1}"
+: "${thinker_url:=http://localhost:${thinker_port}}"
+: "${thinker_trusted_proxies:=127.0.0.1,::1}"
+: "${thinker_catalog_sync:=true}"
+: "${thinker_db_port:=5433}"
+: "${thinker_db_socket:=/var/run/thinker-db}"
+
+rundir="/var/run/thinker"
+logfile="/var/log/thinker/thinker.log"
+pidfile="${rundir}/daemon.pid"
+procname="daemon"
+command="/usr/sbin/daemon"
+command_args="-r -R 5 -u %%THINKER_USER%% -t thinker -P ${pidfile} -p ${rundir}/node.pid -o ${logfile} %%PREFIX%%/libexec/thinker-run"
+start_precmd="thinker_prestart"
+stop_postcmd="rm -f ${rundir}/node.pid"
+
+thinker_prestart()
+{
+	if [ ! -s "%%DBDIR%%/secrets/auth_secret" ]; then
+		err 1 "segredos ausentes; rode 'service thinker_db initdb'"
+	fi
+	install -d -o %%THINKER_USER%% -g wheel -m 0755 "$rundir"
+	install -d -o root -g wheel -m 0755 "${logfile%/*}"
+	[ -f "$logfile" ] || install -o %%THINKER_USER%% -g wheel -m 0640 /dev/null "$logfile"
+	export THINKER_RC_PORT="$thinker_port" THINKER_RC_BIND="$thinker_bind" \
+	    THINKER_RC_URL="$thinker_url" THINKER_RC_PROXIES="$thinker_trusted_proxies" \
+	    THINKER_RC_CATALOG_SYNC="$thinker_catalog_sync" \
+	    THINKER_RC_DB_PORT="$thinker_db_port" THINKER_RC_DB_SOCKET="$thinker_db_socket"
+}
+
+run_rc_command "$1"

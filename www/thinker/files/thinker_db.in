@@ -1,0 +1,125 @@
+#!/bin/sh
+#
+# PROVIDE: thinker_db
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+#
+# Cluster PostgreSQL dedicado do Thinker: so socket Unix, autenticacao peer.
+#
+# thinker_db_enable (bool):   YES para iniciar no boot. Padrao: NO
+# thinker_db_port (int):      porta do cluster (nome do socket). Padrao: 5433
+# thinker_db_data (path):     diretorio do cluster. Padrao: %%DBDIR%%/pgdata
+# thinker_db_socket (path):   diretorio do socket. Padrao: /var/run/thinker-db
+#
+# Primeira vez: service thinker_db initdb
+
+. /etc/rc.subr
+
+name="thinker_db"
+rcvar="thinker_db_enable"
+
+load_rc_config "$name"
+
+: "${thinker_db_enable:=NO}"
+: "${thinker_db_port:=5433}"
+: "${thinker_db_data:=%%DBDIR%%/pgdata}"
+: "${thinker_db_socket:=/var/run/thinker-db}"
+
+pg_bin="%%LOCALBASE%%/bin"
+db_user="postgres"
+svc_user="%%THINKER_USER%%"
+dbdir="%%DBDIR%%"
+logdir="/var/log/thinker"
+pg_log="${logdir}/postgres.log"
+
+start_precmd="thinker_db_prestart"
+start_cmd="thinker_db_start"
+stop_cmd="thinker_db_ctl stop -m fast -w -t 60"
+status_cmd="thinker_db_ctl status"
+extra_commands="initdb reload"
+reload_cmd="thinker_db_ctl reload"
+initdb_cmd="thinker_db_initdb"
+
+thinker_db_ctl()
+{
+	su -m "$db_user" -c "${pg_bin}/pg_ctl -D ${thinker_db_data} $*"
+}
+
+thinker_db_prestart()
+{
+	if [ ! -s "${thinker_db_data}/PG_VERSION" ]; then
+		err 1 "cluster ausente em ${thinker_db_data}; rode 'service thinker_db initdb'"
+	fi
+	install -d -o "$db_user" -g "$db_user" -m 0770 "$thinker_db_socket"
+	install -d -o root -g wheel -m 0755 "$logdir"
+	[ -f "$pg_log" ] || install -o "$db_user" -g wheel -m 0640 /dev/null "$pg_log"
+}
+
+thinker_db_start()
+{
+	thinker_db_ctl "start -w -t 60 -l ${pg_log} -o '-p ${thinker_db_port} -k ${thinker_db_socket}'"
+}
+
+thinker_db_psql()
+{
+	su -m "$db_user" -c "${pg_bin}/psql -X -q -h ${thinker_db_socket} -p ${thinker_db_port} -d postgres $*"
+}
+
+gen_secret()
+{
+	if [ ! -s "${dbdir}/secrets/$1" ]; then
+		(umask 077; openssl rand -hex 32 > "${dbdir}/secrets/$1") || return 1
+		echo "segredo gerado: ${dbdir}/secrets/$1"
+	fi
+	chown "root:${svc_user}" "${dbdir}/secrets/$1"
+	chmod 0640 "${dbdir}/secrets/$1"
+}
+
+thinker_db_initdb()
+{
+	local was_running v
+
+	id "$db_user" >/dev/null 2>&1 || err 1 "usuario ${db_user} inexistente"
+	id "$svc_user" >/dev/null 2>&1 || err 1 "usuario ${svc_user} inexistente"
+
+	# Se ${dbdir} for um dataset ZFS criado antes, ele e respeitado.
+	install -d -o root -g wheel -m 0755 "$dbdir"
+	install -d -o "$db_user" -g "$db_user" -m 0700 "$thinker_db_data"
+	install -d -o "$svc_user" -g "$svc_user" -m 0700 "${dbdir}/recordings"
+	install -d -o root -g "$svc_user" -m 0750 "${dbdir}/secrets"
+	gen_secret auth_secret || return 1
+	gen_secret encryption_key || return 1
+
+	if [ ! -s "${thinker_db_data}/PG_VERSION" ]; then
+		echo "initdb em ${thinker_db_data} (UTF8, peer, sem TCP)"
+		su -m "$db_user" -c "${pg_bin}/initdb -D ${thinker_db_data} -U ${db_user} \
+		    -E UTF8 --locale=C.UTF-8 --auth-local=peer --auth-host=reject" \
+		    >/dev/null || return 1
+		cat >> "${thinker_db_data}/postgresql.conf" <<-EOF
+
+		# thinker_db: so socket Unix; porta e diretorio vem do rc.conf
+		listen_addresses = ''
+		unix_socket_permissions = 0770
+		shared_buffers = 128MB
+		EOF
+	fi
+
+	# Acesso ao socket (0770, grupo postgres)
+	pw groupmod "$db_user" -m "$svc_user" 2>/dev/null
+
+	was_running=yes
+	if ! thinker_db_ctl status >/dev/null 2>&1; then
+		was_running=no
+		thinker_db_prestart && thinker_db_start >/dev/null || return 1
+	fi
+	if ! thinker_db_psql "-tAc \"select 1 from pg_roles where rolname='${svc_user}'\"" | grep -q 1; then
+		su -m "$db_user" -c "${pg_bin}/createuser -h ${thinker_db_socket} -p ${thinker_db_port} ${svc_user}"
+		su -m "$db_user" -c "${pg_bin}/createdb -h ${thinker_db_socket} -p ${thinker_db_port} \
+		    -O ${svc_user} -E UTF8 thinker"
+		echo "papel e banco thinker criados (dono ${svc_user}, sem superusuario)"
+	fi
+	[ "$was_running" = yes ] || thinker_db_ctl "stop -m fast -w" >/dev/null
+	echo "pronto; suba com: service thinker_db start && service thinker start"
+}
+
+run_rc_command "$1"

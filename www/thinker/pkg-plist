@@ -1,0 +1,4 @@
+bin/thinker
+libexec/thinker-run
+@sample %%ETCDIR%%/thinker.env.sample
+@sample etc/newsyslog.conf.d/thinker.conf.sample

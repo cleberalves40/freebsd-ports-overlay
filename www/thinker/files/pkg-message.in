@@ -1,0 +1,33 @@
+[
+{ type: install
+  message: <<EOM
+Thinker foi instalado em %%APPDIR%%.
+
+Primeira configuracao:
+
+  # opcional, com raiz ZFS: dataset proprio para os dados
+  zfs create -o mountpoint=%%DBDIR%% -o compression=lz4 zroot/thinker
+  zfs create -o recordsize=16K zroot/thinker/pgdata
+
+  sysrc thinker_db_enable=YES thinker_enable=YES
+  service thinker_db initdb
+  service thinker_db start
+  service thinker start
+
+O painel fica em http://localhost:2099 (so loopback). O token de setup
+do primeiro acesso aparece em /var/log/thinker/thinker.log.
+
+Porta, endereco e URL publica: variaveis thinker_* no rc.conf (veja
+%%PREFIX%%/etc/rc.d/thinker). Variaveis extras: %%ETCDIR%%/thinker.env.
+
+Os segredos ficam em %%DBDIR%%/secrets. Guarde uma copia da
+encryption_key: sem ela as chaves de provedores no banco sao perdidas.
+EOM
+}
+{ type: upgrade
+  message: <<EOM
+As migrations do banco rodam no proximo inicio do servico:
+  service thinker restart
+EOM
+}
+]

@@ -1,0 +1,33 @@
+#!/bin/sh
+# Ambiente do Thinker e exec do node; chamado pelo rc.d thinker via daemon(8).
+# Configuracao: variaveis thinker_* no rc.conf e %%ETCDIR%%/thinker.env
+umask 027
+
+port=${THINKER_RC_PORT:-2099}
+db_port=${THINKER_RC_DB_PORT:-5433}
+db_socket=${THINKER_RC_DB_SOCKET:-/var/run/thinker-db}
+url=${THINKER_RC_URL:-http://localhost:${port}}
+
+export HOME=%%DBDIR%% NODE_ENV=production SEED_DATA=false
+export PORT="$port" BIND_ADDRESS="${THINKER_RC_BIND:-127.0.0.1}"
+export DATABASE_URL="postgresql://%%THINKER_USER%%@localhost:${db_port}/thinker?host=${db_socket}"
+export BETTER_AUTH_URL="$url"
+export TRUSTED_PROXIES="${THINKER_RC_PROXIES:-127.0.0.1,::1}"
+export THINKER_CATALOG_SYNC="${THINKER_RC_CATALOG_SYNC:-true}"
+export THINKER_RECORDING_STORAGE=auto
+export THINKER_RECORDING_FILESYSTEM_PATH=%%DBDIR%%/recordings
+export RUN_MIGRATIONS_ON_BOOT=true SHUTDOWN_DRAIN_MS=10000
+case "$url" in http:*) export THINKER_DISABLE_HSTS=1 ;; esac
+unset THINKER_RC_PORT THINKER_RC_BIND THINKER_RC_URL THINKER_RC_PROXIES \
+    THINKER_RC_CATALOG_SYNC THINKER_RC_DB_PORT THINKER_RC_DB_SOCKET
+
+BETTER_AUTH_SECRET=$(cat %%DBDIR%%/secrets/auth_secret) || exit 1
+THINKER_ENCRYPTION_KEY=$(cat %%DBDIR%%/secrets/encryption_key) || exit 1
+export BETTER_AUTH_SECRET THINKER_ENCRYPTION_KEY
+
+if [ -r %%ETCDIR%%/thinker.env ]; then
+	set -a; . %%ETCDIR%%/thinker.env; set +a
+fi
+
+cd %%APPDIR%% || exit 1
+exec %%LOCALBASE%%/bin/node packages/backend/dist/main.js

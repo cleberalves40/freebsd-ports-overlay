@@ -1,0 +1,3 @@
+#!/bin/sh
+# CLI oficial do Thinker com o node do FreeBSD
+exec %%LOCALBASE%%/bin/node %%APPDIR%%/packages/cli/bin/thinker.js "$@"
