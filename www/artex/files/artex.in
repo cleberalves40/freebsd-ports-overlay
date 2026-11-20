@@ -1,0 +1,84 @@
+#!/bin/sh
+#
+# PROVIDE: artex
+# REQUIRE: LOGIN NETWORKING artex_db
+# KEYWORD: shutdown
+#
+# Servidor do ARTEX (binario Go sob daemon(8), reiniciado se cair).
+#
+# artex_enable (bool):           YES para iniciar no boot. Padrao: NO
+# artex_port (int):              porta HTTP. Padrao: 8787
+# artex_bind (addr):             endereco de escuta. Padrao: 127.0.0.1
+# artex_proxy_port (int):        porta do proxy MITM. Padrao: 8788
+# artex_proxy_bind (addr):       bind do proxy. Padrao: 127.0.0.1; vazio desliga
+# artex_url (url):               URL publica do painel. Padrao: http://localhost:${artex_port}
+# artex_trusted_proxies (list):  proxies cujo X-Forwarded-For vale. Padrao: 127.0.0.1,::1
+#
+# Variaveis extras do ARTEX: %%ETCDIR%%/artex.env
+
+. /etc/rc.subr
+
+name="artex"
+rcvar="artex_enable"
+
+load_rc_config artex_db
+load_rc_config "$name"
+
+: "${artex_enable:=NO}"
+: "${artex_port:=8787}"
+: "${artex_bind:=127.0.0.1}"
+: "${artex_proxy_port:=8788}"
+: "${artex_proxy_bind:=127.0.0.1}"
+: "${artex_url:=http://localhost:${artex_port}}"
+: "${artex_trusted_proxies:=127.0.0.1,::1}"
+: "${artex_db_port:=5434}"
+: "${artex_db_socket:=/var/run/artex-db}"
+
+rundir="/var/run/artex"
+logfile="/var/log/artex/artex.log"
+pidfile="${rundir}/daemon.pid"
+procname="daemon"
+command="/usr/sbin/daemon"
+command_args="-r -R 5 -u %%ARTEX_USER%% -t artex -P ${pidfile} -p ${rundir}/artex.pid -o ${logfile} %%PREFIX%%/libexec/artex-run"
+start_precmd="artex_prestart"
+stop_postcmd="rm -f ${rundir}/artex.pid"
+
+artex_prestart()
+{
+	install -d -o %%ARTEX_USER%% -g wheel -m 0755 "$rundir"
+	install -d -o root -g wheel -m 0755 "${logfile%/*}"
+	[ -f "$logfile" ] || install -o %%ARTEX_USER%% -g wheel -m 0640 /dev/null "$logfile"
+	install -d -o %%ARTEX_USER%% -g %%ARTEX_USER%% -m 0700 "%%DBDIR%%/data"
+	install -d -o %%ARTEX_USER%% -g %%ARTEX_USER%% -m 0700 "%%DBDIR%%/keys"
+	install -d -o root -g wheel -m 0755 "%%ETCDIR%%"
+	# config.json minimo se ainda nao existir (artex-freebsd.sh tambem grava)
+	if [ ! -f "%%ETCDIR%%/config.json" ]; then
+		cat > "%%ETCDIR%%/config.json" <<-EOF
+		{
+		  "database": {
+		    "host": "${artex_db_socket}",
+		    "port": ${artex_db_port},
+		    "user": "%%ARTEX_USER%%",
+		    "password": "",
+		    "dbname": "artex",
+		    "sslmode": "disable"
+		  },
+		  "skill_dir": "%%APPDIR%%/skills"
+		}
+		EOF
+		chown "root:%%ARTEX_USER%%" "%%ETCDIR%%/config.json"
+		chmod 0640 "%%ETCDIR%%/config.json"
+	fi
+	if [ ! -f "%%ETCDIR%%/artex.env" ]; then
+		install -o root -g %%ARTEX_USER%% -m 0640 \
+		    "%%ETCDIR%%/artex.env.sample" "%%ETCDIR%%/artex.env" 2>/dev/null || \
+		    ( umask 027; touch "%%ETCDIR%%/artex.env"
+		      chown "root:%%ARTEX_USER%%" "%%ETCDIR%%/artex.env"; chmod 0640 "%%ETCDIR%%/artex.env" )
+	fi
+	export ARTEX_RC_PORT="$artex_port" ARTEX_RC_BIND="$artex_bind" \
+	    ARTEX_RC_PROXY_PORT="$artex_proxy_port" ARTEX_RC_PROXY_BIND="$artex_proxy_bind" \
+	    ARTEX_RC_URL="$artex_url" ARTEX_RC_PROXIES="$artex_trusted_proxies" \
+	    ARTEX_RC_DB_PORT="$artex_db_port" ARTEX_RC_DB_SOCKET="$artex_db_socket"
+}
+
+run_rc_command "$1"

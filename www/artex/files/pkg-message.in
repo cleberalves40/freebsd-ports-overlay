@@ -1,0 +1,38 @@
+[
+{ type: install
+  message: <<EOM
+ARTEX foi instalado em %%APPDIR%%.
+
+Primeira configuracao:
+
+  # opcional, com raiz ZFS: dataset proprio para os dados
+  zfs create -o mountpoint=%%DBDIR%% -o compression=lz4 zroot/artex
+  zfs create -o recordsize=16K zroot/artex/pgdata
+  zfs create zroot/artex/data
+  zfs create zroot/artex/keys
+
+  sysrc artex_db_enable=YES artex_enable=YES
+  service artex_db initdb
+  service artex_db start
+  service artex start
+
+O painel fica em http://localhost:8787 (so loopback). O token de setup
+do primeiro acesso aparece em /var/log/artex/artex.log.
+
+Porta, bind, proxy e URL: variaveis artex_* no rc.conf (veja
+%%PREFIX%%/etc/rc.d/artex). Variaveis extras: %%ETCDIR%%/artex.env.
+
+Scanners usados pelas skills (opcional, via pkg): bash (obrigatorio),
+nmap, nuclei, ffuf, httpx, subfinder, katana, py312-sqlmap, ripgrep.
+
+As chaves JWT/secret ficam em %%DBDIR%%/keys. Guarde uma copia: sem elas
+sessoes e segredos da aplicacao nao abrem.
+EOM
+}
+{ type: upgrade
+  message: <<EOM
+Reinicie o servico apos o upgrade:
+  service artex restart
+EOM
+}
+]

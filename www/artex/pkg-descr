@@ -1,0 +1,8 @@
+ARTEX is an open-source multi-agent pentest platform driven by LLMs.
+It embeds a Next.js UI in a single static Go binary, talks to a dedicated
+PostgreSQL cluster, and orchestrates scanner skills (nmap, nuclei, ffuf,
+httpx, Norma bash tools, and others).
+
+This port builds the official release natively on FreeBSD (CGO disabled,
+UI via NEXT_EXPORT=1 + webpack) and ships rc(8) scripts for the server and
+its PostgreSQL cluster.

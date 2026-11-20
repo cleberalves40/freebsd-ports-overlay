@@ -1,0 +1,3 @@
+libexec/artex-run
+@sample %%ETCDIR%%/artex.env.sample
+@sample etc/newsyslog.conf.d/artex.conf.sample

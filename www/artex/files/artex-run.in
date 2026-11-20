@@ -1,0 +1,36 @@
+#!/bin/sh
+# Ambiente do ARTEX e exec do binario; chamado pelo rc.d artex via daemon(8).
+# Configuracao: variaveis artex_* no rc.conf e %%ETCDIR%%/artex.env
+umask 027
+
+port=${ARTEX_RC_PORT:-8787}
+bind=${ARTEX_RC_BIND:-127.0.0.1}
+proxy_port=${ARTEX_RC_PROXY_PORT:-8788}
+proxy_bind=${ARTEX_RC_PROXY_BIND-127.0.0.1}
+db_port=${ARTEX_RC_DB_PORT:-5434}
+db_socket=${ARTEX_RC_DB_SOCKET:-/var/run/artex-db}
+proxies=${ARTEX_RC_PROXIES:-127.0.0.1,::1}
+
+export HOME=%%DBDIR%%
+export PATH=/usr/local/bin:/usr/bin:/bin
+export ARTEX_PG_DSN="postgres://%%ARTEX_USER%%@/artex?host=${db_socket}&port=${db_port}&sslmode=disable"
+export ARTEX_JWT_KEY_DIR=%%DBDIR%%/keys
+export ARTEX_CONFIG=%%ETCDIR%%/config.json
+export ARTEX_SKILL_DIR=%%APPDIR%%/skills
+export ARTEX_TRUSTED_PROXIES="$proxies"
+unset ARTEX_RC_PORT ARTEX_RC_BIND ARTEX_RC_PROXY_PORT ARTEX_RC_PROXY_BIND \
+    ARTEX_RC_URL ARTEX_RC_PROXIES ARTEX_RC_DB_PORT ARTEX_RC_DB_SOCKET
+
+if [ -r %%ETCDIR%%/artex.env ]; then
+	set -a; . %%ETCDIR%%/artex.env; set +a
+fi
+
+if [ -n "$proxy_bind" ]; then
+	proxy_arg="-proxy ${proxy_bind}:${proxy_port}"
+else
+	proxy_arg="-proxy ''"
+fi
+
+cd %%APPDIR%% || exit 1
+# shellcheck disable=SC2086
+exec ./artex -addr "${bind}:${port}" ${proxy_arg} -data %%DBDIR%%/data

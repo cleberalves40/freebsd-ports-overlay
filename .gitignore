@@ -1,2 +1,6 @@
 # area de trabalho dos ports
 */*/work/
+
+# Distfiles locais (caches npm/vendor e .pkg); publicar nas releases do GitHub
+distfiles/
+*.pkg

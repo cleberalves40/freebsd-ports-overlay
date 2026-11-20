@@ -9,13 +9,15 @@ deste repositório.
 | Port | Versão | Aplicativo (upstream) |
 |---|---|---|
 | [`www/thinker`](www/thinker) | 0.41.2 | [Thinker](https://github.com/patrickbrandao/thinker): gateway de LLM para agentes de IA (MIT) |
+| [`www/artex`](www/artex) | 0.6.0 | [ARTEX](https://github.com/BaaRai/ARTEX): plataforma de pentest multiagente com LLM (AGPL-3.0) |
 
 ```sh
 git clone https://github.com/cleberalves40/freebsd-ports-overlay.git
 poudriere ports -c -p overlay -m null -M "$PWD/freebsd-ports-overlay"
-poudriere bulk -j <jail> -p default -O overlay www/thinker
+poudriere bulk -j <jail> -p default -O overlay www/thinker www/artex
 # ou, sem poudriere:
 make -C freebsd-ports-overlay/www/thinker install clean
+make -C freebsd-ports-overlay/www/artex install clean
 ```
 
 Os ports deste repositório usam a licença BSD-2-Clause (como a árvore oficial). Cada
@@ -120,3 +122,92 @@ Pontos a conferir a cada versão nova:
   reinstalação preservando `/var/db/thinker`.
 - Pendentes: `poudriere testport` (a árvore `default` do poudriere estava fora de sincronia
   com o repositório de pacotes) e teste em aarch64.
+
+---
+
+# www/artex
+
+Pacote nativo do [ARTEX](https://github.com/BaaRai/ARTEX) para o FreeBSD, mantido neste
+repositório em [`www/artex`](www/artex).
+
+| Papel | Quem | Onde |
+|---|---|---|
+| Aplicativo (autor e fonte) | BaaRai e contribuidores do ARTEX, licença AGPL-3.0 | [BaaRai/ARTEX](https://github.com/BaaRai/ARTEX) |
+| Port (empacotamento para FreeBSD) | Cleber Alves do Nascimento, `MAINTAINER` do port | [cleberalves40/freebsd-ports-overlay](https://github.com/cleberalves40/freebsd-ports-overlay), `www/artex` |
+
+O port não altera o código do ARTEX: compila a tag publicada pelo upstream e empacota o
+resultado. Defeitos do aplicativo vão para o upstream; defeitos de empacotamento (rc.d,
+lançador, plist, dependências) ficam aqui.
+
+### O que o pacote instala
+
+| Caminho | Conteúdo |
+|---|---|
+| `/usr/local/libexec/artex` | Binário Go estático (`-tags embedui`) + `skills/` + `extension/` |
+| `/usr/local/libexec/artex-run` | Lançador: monta o ambiente a partir do `rc.conf`, lê `artex.env` e faz `exec ./artex` |
+| `/usr/local/etc/rc.d/artex_db` | Cluster PostgreSQL dedicado (socket Unix, autenticação peer); `initdb` como comando extra |
+| `/usr/local/etc/rc.d/artex` | Servidor sob `daemon(8)`, reiniciado se cair |
+| `/usr/local/etc/artex/artex.env` | Variáveis extras (chaves de LLM, etc.) |
+| `/usr/local/etc/newsyslog.conf.d/artex.conf` | Rotação de `/var/log/artex/*.log` |
+
+Usuário e grupo `artex` (UID/GID 1007). Dados em `/var/db/artex`. Dependências de runtime:
+`postgresql18-server` e `bash` (skills Norma). O pacote **não** é `NO_ARCH` (binário amd64
+ou aarch64).
+
+### Instalação
+
+```sh
+pkg add artex-0.6.0.pkg            # ou pkg install artex, quando houver repositório
+sysrc artex_db_enable=YES artex_enable=YES
+service artex_db initdb             # diretórios, cluster, papel e banco
+service artex_db start
+service artex start
+```
+
+Configuração no `rc.conf`:
+
+| Variável | Padrão |
+|---|---|
+| `artex_port` | `8787` |
+| `artex_bind` | `127.0.0.1` |
+| `artex_proxy_port` / `artex_proxy_bind` | `8788` / `127.0.0.1` (vazio desliga o proxy MITM) |
+| `artex_url` | `http://localhost:${artex_port}` |
+| `artex_trusted_proxies` | `127.0.0.1,::1` |
+| `artex_db_port`, `artex_db_socket`, `artex_db_data` | `5434`, `/var/run/artex-db`, `/var/db/artex/pgdata` |
+
+Integração com o script de manutenção: ver
+[docs/port-artex.md](https://github.com/cleberalves40/freebsd-podman-apps/blob/main/docs/port-artex.md)
+no repositório `freebsd-podman-apps` (`artex-freebsd.sh` 1.1.0, `pkg-migrate`).
+
+### Manutenção do port
+
+O build não acessa a rede. As dependências vêm de dois distfiles extras, publicados nas
+releases deste repositório com a tag `artex-build-cache`:
+
+- `artex-npm-cache-<versão>.tar.xz` — cache do npm da UI (`web/`), amd64 e aarch64
+- `artex-vendor-<versão>.tar.xz` — saída de `go mod vendor`
+
+Nova versão do upstream:
+
+```sh
+cd www/artex
+# 1. DISTVERSION= <nova> no Makefile (PORTREVISION volta a 0)
+make makesum DISTFILES=BaaRai-ARTEX-v<nova>_GH0.tar.gz
+make make-npm-cache            # npm ci freebsd x64+arm64 → DISTDIR
+make make-vendor               # go mod vendor → DISTDIR
+make makesum
+# 2. publicar os caches:
+gh release create artex-build-cache -t artex-build-cache -n 'ARTEX build caches' 2>/dev/null || true
+gh release upload artex-build-cache \
+  "$(make -V DISTDIR)/artex-npm-cache-<nova>.tar.xz" \
+  "$(make -V DISTDIR)/artex-vendor-<nova>.tar.xz" \
+  -R cleberalves40/freebsd-ports-overlay
+# 3. compilar e conferir
+make package stage-qa check-plist
+```
+
+Pontos a conferir a cada versão nova:
+
+- `web/`: `NEXT_EXPORT=1 next build --webpack` (Turbopack não funciona no FreeBSD).
+- `go.mod` / `go` version (precisa 1.26+).
+- Conteúdo de `skills/` e `extension/` copiados para `libexec/artex`.

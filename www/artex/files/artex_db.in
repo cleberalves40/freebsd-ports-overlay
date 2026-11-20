@@ -1,0 +1,113 @@
+#!/bin/sh
+#
+# PROVIDE: artex_db
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+#
+# Cluster PostgreSQL dedicado do ARTEX: so socket Unix, autenticacao peer.
+#
+# artex_db_enable (bool):   YES para iniciar no boot. Padrao: NO
+# artex_db_port (int):      porta do cluster (nome do socket). Padrao: 5434
+# artex_db_data (path):     diretorio do cluster. Padrao: %%DBDIR%%/pgdata
+# artex_db_socket (path):   diretorio do socket. Padrao: /var/run/artex-db
+#
+# Primeira vez: service artex_db initdb
+
+. /etc/rc.subr
+
+name="artex_db"
+rcvar="artex_db_enable"
+
+load_rc_config "$name"
+
+: "${artex_db_enable:=NO}"
+: "${artex_db_port:=5434}"
+: "${artex_db_data:=%%DBDIR%%/pgdata}"
+: "${artex_db_socket:=/var/run/artex-db}"
+
+pg_bin="%%LOCALBASE%%/bin"
+db_user="postgres"
+svc_user="%%ARTEX_USER%%"
+dbdir="%%DBDIR%%"
+logdir="/var/log/artex"
+pg_log="${logdir}/postgres.log"
+
+start_precmd="artex_db_prestart"
+start_cmd="artex_db_start"
+stop_cmd="artex_db_ctl stop -m fast -w -t 60"
+status_cmd="artex_db_ctl status"
+extra_commands="initdb reload"
+reload_cmd="artex_db_ctl reload"
+initdb_cmd="artex_db_initdb"
+
+artex_db_ctl()
+{
+	su -m "$db_user" -c "${pg_bin}/pg_ctl -D ${artex_db_data} $*"
+}
+
+artex_db_prestart()
+{
+	if [ ! -s "${artex_db_data}/PG_VERSION" ]; then
+		err 1 "cluster ausente em ${artex_db_data}; rode 'service artex_db initdb'"
+	fi
+	install -d -o "$db_user" -g "$db_user" -m 0770 "$artex_db_socket"
+	install -d -o root -g wheel -m 0755 "$logdir"
+	[ -f "$pg_log" ] || install -o "$db_user" -g wheel -m 0640 /dev/null "$pg_log"
+}
+
+artex_db_start()
+{
+	artex_db_ctl "start -w -t 60 -l ${pg_log} -o '-p ${artex_db_port} -k ${artex_db_socket}'"
+}
+
+artex_db_psql()
+{
+	su -m "$db_user" -c "${pg_bin}/psql -X -q -h ${artex_db_socket} -p ${artex_db_port} -d postgres $*"
+}
+
+artex_db_initdb()
+{
+	local was_running
+
+	id "$db_user" >/dev/null 2>&1 || err 1 "usuario ${db_user} inexistente"
+	id "$svc_user" >/dev/null 2>&1 || err 1 "usuario ${svc_user} inexistente"
+
+	# Se ${dbdir} for um dataset ZFS criado antes, ele e respeitado.
+	install -d -o root -g wheel -m 0755 "$dbdir"
+	install -d -o "$db_user" -g "$db_user" -m 0700 "$artex_db_data"
+	install -d -o "$svc_user" -g "$svc_user" -m 0700 "${dbdir}/data"
+	install -d -o "$svc_user" -g "$svc_user" -m 0700 "${dbdir}/keys"
+
+	if [ ! -s "${artex_db_data}/PG_VERSION" ]; then
+		echo "initdb em ${artex_db_data} (UTF8, peer, sem TCP)"
+		su -m "$db_user" -c "${pg_bin}/initdb -D ${artex_db_data} -U ${db_user} \
+		    -E UTF8 --locale=C.UTF-8 --auth-local=peer --auth-host=reject" \
+		    >/dev/null || return 1
+		cat >> "${artex_db_data}/postgresql.conf" <<-EOF
+
+		# artex_db: so socket Unix; porta e diretorio vem do rc.conf
+		listen_addresses = ''
+		unix_socket_permissions = 0770
+		shared_buffers = 128MB
+		EOF
+	fi
+
+	# Acesso ao socket (0770, grupo postgres)
+	pw groupmod "$db_user" -m "$svc_user" 2>/dev/null
+
+	was_running=yes
+	if ! artex_db_ctl status >/dev/null 2>&1; then
+		was_running=no
+		artex_db_prestart && artex_db_start >/dev/null || return 1
+	fi
+	if ! artex_db_psql "-tAc \"select 1 from pg_roles where rolname='${svc_user}'\"" | grep -q 1; then
+		su -m "$db_user" -c "${pg_bin}/createuser -h ${artex_db_socket} -p ${artex_db_port} ${svc_user}"
+		su -m "$db_user" -c "${pg_bin}/createdb -h ${artex_db_socket} -p ${artex_db_port} \
+		    -O ${svc_user} -E UTF8 artex"
+		echo "papel e banco artex criados (dono ${svc_user}, sem superusuario)"
+	fi
+	[ "$was_running" = yes ] || artex_db_ctl "stop -m fast -w" >/dev/null
+	echo "pronto; suba com: service artex_db start && service artex start"
+}
+
+run_rc_command "$1"
